@@ -877,6 +877,9 @@ if-not-architecture        100-200                         amzn-main
 	}
 }
 
+// func TestParseYumCheckUpdateLine(t *testing.T) {
+// }
+
 func TestParseYumUpdateinfoListAvailable(t *testing.T) {
 	r := newRedhat(config.ServerInfo{})
 	rhelStdout := `RHSA-2015:2315 Moderate/Sec.  NetworkManager-1:1.0.6-27.el7.x86_64

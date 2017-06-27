@@ -147,14 +147,14 @@ func (o *redhat) checkIfSudoNoPasswd() error {
 		if majorVersion < 6 {
 			cmds = []cmd{
 				{"yum --color=never repolist", zero},
-				{"yum --color=never check-update", []int{0, 100}},
+				// {"yum --color=never check-update", []int{0, 100}},
 				{"yum --color=never list-security --security", zero},
 				{"yum --color=never info-security", zero},
 			}
 		} else {
 			cmds = []cmd{
 				{"yum --color=never repolist", zero},
-				{"yum --color=never check-update", []int{0, 100}},
+				// {"yum --color=never check-update", []int{0, 100}},
 				{"yum --color=never --security updateinfo list updates", zero},
 				{"yum --color=never --security updateinfo updates", zero},
 			}
@@ -250,6 +250,7 @@ func (o *redhat) scanPackages() error {
 }
 
 func (o *redhat) scanInstalledPackages() (installed []models.Package, err error) {
+	//TODO repoqueryに変更する
 	cmd := "rpm -qa --queryformat '%{NAME}\t%{EPOCHNUM}\t%{VERSION}\t%{RELEASE}\n'"
 	r := o.exec(cmd, noSudo)
 	if r.isSuccess() {
@@ -305,6 +306,8 @@ func (o *redhat) scanVulnInfos() (models.VulnInfos, error) {
 
 // For CentOS
 func (o *redhat) scanUnsecurePackagesUsingYumCheckUpdate() (models.VulnInfos, error) {
+
+	//TODO change to repolist
 	cmd := "LANGUAGE=en_US.UTF-8 yum --color=never %s check-update"
 	if o.getServerInfo().Enablerepo != "" {
 		cmd = fmt.Sprintf(cmd, "--enablerepo="+o.getServerInfo().Enablerepo)
@@ -334,6 +337,7 @@ func (o *redhat) scanUnsecurePackagesUsingYumCheckUpdate() (models.VulnInfos, er
 		CveIDs  []string
 	}
 
+	// TODO repolistでやるべきか
 	allChangelog, err := o.getAllChangelog(packages)
 	if err != nil {
 		o.log.Errorf("Failed to getAllchangelog. err: %s", err)
@@ -480,28 +484,24 @@ func (o *redhat) parseYumCheckUpdateLines(stdout string) (models.Packages, error
 
 func (o *redhat) parseYumCheckUpdateLine(line string) (models.Package, error) {
 	fields := strings.Fields(line)
-	if len(fields) < 3 {
-		return models.Package{}, fmt.Errorf("Unknown format: %s", line)
-	}
-	splitted := strings.Split(fields[0], ".")
-	packName := ""
-	if len(splitted) == 1 {
-		packName = fields[0]
-	} else {
-		packName = strings.Join(strings.Split(fields[0], ".")[0:(len(splitted)-1)], ".")
+	if len(fields) < 5 {
+		return nil, fmt.Errorf("Unknown format: %s", line)
 	}
 
-	verfields := strings.Split(fields[1], "-")
-	if len(verfields) != 2 {
-		return models.Package{}, fmt.Errorf("Unknown format: %s", line)
+	ver := ""
+	epoch := fields[1]
+	if epoch == "0" {
+		ver = fields[2]
+	} else {
+		ver = fmt.Sprintf("%s:%s", fields[1], fields[2])
 	}
-	release := verfields[1]
-	repos := strings.Join(fields[2:len(fields)], " ")
+
+	repos := strings.Join(fields[4:len(fields)], " ")
 
 	return models.Package{
-		Name:       packName,
-		NewVersion: verfields[0],
-		NewRelease: release,
+		Name:       fields[0],
+		NewVersion: ver,
+		NewRelease: fields[3],
 		Repository: repos,
 	}, nil
 }
@@ -666,6 +666,7 @@ func (o *redhat) scanUnsecurePackagesUsingYumPluginSecurity() (models.VulnInfos,
 			"yum updateinfo is not suppported on CentOS")
 	}
 
+	//TODO repoqueryだとこれがいらない可能性あり sudo
 	cmd := "yum --color=never repolist"
 	r := o.exec(util.PrependProxyEnv(cmd), o.sudo())
 	if !r.isSuccess() {
@@ -678,6 +679,7 @@ func (o *redhat) scanUnsecurePackagesUsingYumPluginSecurity() (models.VulnInfos,
 		return nil, fmt.Errorf("Not implemented yet: %s, err: %s", o.Distro, err)
 	}
 
+	//TODO repoqueryだとこれがいらない可能性あり sudo
 	if (o.Distro.Family == config.RedHat || o.Distro.Family == config.Oracle) && major == 5 {
 		cmd = "yum --color=never list-security --security"
 	} else {
@@ -690,8 +692,15 @@ func (o *redhat) scanUnsecurePackagesUsingYumPluginSecurity() (models.VulnInfos,
 	advIDPackNamesList, err := o.parseYumUpdateinfoListAvailable(r.Stdout)
 
 	// get package name, version, rel to be upgrade.
-	cmd = "LANGUAGE=en_US.UTF-8 yum --color=never check-update"
-	r = o.exec(util.PrependProxyEnv(cmd), o.sudo())
+	cmd = `repoquery --all --pkgnarrow=updates --qf="%{name} %{epoch} %{version} %{release} %{repo}" %s`
+	if o.getServerInfo().Enablerepo != "" {
+		//TODO enablerepo should be split by space
+		//TODO config is comma separated
+		cmd = fmt.Sprintf(cmd, "--enablerepo="+o.getServerInfo().Enablerepo)
+	} else {
+		cmd = fmt.Sprintf(cmd, "")
+	}
+	r = o.exec(util.PrependProxyEnv(cmd), noSudo)
 	if !r.isSuccess(0, 100) {
 		//returns an exit code of 100 if there are available updates.
 		return nil, fmt.Errorf("Failed to SSH: %s", r)
